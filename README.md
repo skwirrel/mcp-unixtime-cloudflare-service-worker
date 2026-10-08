@@ -115,7 +115,53 @@ Authentication settings cannot be edited later; remove and re-add the connector 
 Add a custom connector at `https://unixtime.example.com/mcp/<AUTH_SECRET>` with no authentication.
 The whole URL is a credential: treat it like a password.
 
-**Getting Claude to use it**
+**Claude Code: stamp every session automatically**
+
+If you have added the connector in Claude web, Claude Code picks it up through connector sync and
+`claude mcp list` will show it, so the `claude mcp add` step above is only needed if you do not use
+claude.ai connectors. Either way, nothing calls `now` on its own. A `SessionStart` hook fixes that
+deterministically: it calls the Worker when a session begins and drops the timestamp and token into
+Claude's context, so later you can just ask "how long has this session been running?".
+
+1. Put the server URL and auth secret where the hook can read them:
+
+   ```sh
+   mkdir -p ~/.config/unixtime
+   printf 'UNIXTIME_URL=https://unixtime.example.com\nUNIXTIME_AUTH_SECRET=<AUTH_SECRET>\n' > ~/.config/unixtime/env
+   chmod 600 ~/.config/unixtime/env
+   ```
+
+2. Install the hook script from this repo:
+
+   ```sh
+   mkdir -p ~/.claude/hooks
+   cp claude-code/unixtime-session-start.sh ~/.claude/hooks/
+   chmod +x ~/.claude/hooks/unixtime-session-start.sh
+   ```
+
+3. Merge `claude-code/settings-snippet.json` into `~/.claude/settings.json` (or paste it in via `/hooks`):
+
+   ```json
+   {
+     "hooks": {
+       "SessionStart": [
+         {
+           "matcher": "startup|clear",
+           "hooks": [
+             { "type": "command", "command": "$HOME/.claude/hooks/unixtime-session-start.sh", "timeout": 10 }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+The hook runs on a fresh start and after `/clear`, not on resume, so a resumed session keeps its
+original start time. It needs `curl`, uses `jq` if present, and prints nothing if the config file is
+missing or the Worker is unreachable, so it can never stop a session from starting. You can check it
+by hand with `echo '{}' | ~/.claude/hooks/unixtime-session-start.sh`.
+
+**Getting Claude to use it in Claude web**
 
 Nothing triggers a tool call on its own, so add an instruction to your user preferences in the Claude
 web UI. This is the one I use, and it works well:
