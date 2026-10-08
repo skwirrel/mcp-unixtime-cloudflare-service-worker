@@ -10,6 +10,20 @@ A tiny, stateless [MCP](https://modelcontextprotocol.io) server on Cloudflare Wo
 Everything is Unix time in UTC. There is no storage: the start time lives in the conversation as a token
 that is HMAC-signed, so the model cannot invent or mangle one without the server noticing.
 
+## Why
+
+Claude has no idea what time it is, and no way to tell how long a conversation has been running. I
+wanted both: to know when a particular conversation started, and how long we had been discussing
+something, so that time spent with Claude on client work could go onto a timesheet.
+
+With this connector and a one-line instruction in Claude's preferences, every conversation opens with a
+timestamp, and at any point I can ask how long it has been going and get a figure that is measured
+rather than guessed. The signed token is what makes the answer trustworthy: Claude cannot make up a
+plausible-looking start time, it can only hand back one the server issued.
+
+It replaces the third-party "Time MCP Server" listings, which point at an npm package the official MCP
+project does not publish. It deliberately does nothing else: no timezones, no storage, no accounts.
+
 ```json
 // now
 { "unix": 1791391200, "iso_utc": "2026-10-07T14:00:00Z", "token": "1791391200.a3f91c07" }
@@ -103,13 +117,15 @@ The whole URL is a credential: treat it like a password.
 
 **Getting Claude to use it**
 
-Nothing triggers a tool call on its own, so add something like this to your user preferences:
+Nothing triggers a tool call on its own, so add an instruction to your user preferences in the Claude
+web UI. This is the one I use, and it works well:
 
-> At the start of every conversation, call the unixtime `now` tool and keep the token. When I say
-> "stop the clock", call `elapsed_since` with that token and report the result.
+> Use the unixtime mcp connector to get the current time at the start of each conversation because
+> sometimes I will later want to know when a particular conversation started and how long we've been
+> discussing it.
 
-Claude has no hook for a conversation ending, so the end is either an explicit request or the last
-checkpoint taken. The token returned by `elapsed_since` is an ordinary `now` token, so you can chain
+Then, whenever you want the figure, just ask how long the conversation has been going. Claude has no
+hook for a conversation ending, so the end is either an explicit request or the last checkpoint taken. The token returned by `elapsed_since` is an ordinary `now` token, so you can chain
 checkpoints through a long conversation.
 
 ## Authentication details
