@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+# Generate each value with: openssl rand -hex 32
+AUTH_SECRET=replace-with-openssl-rand-hex-32
+TOKEN_SECRET=replace-with-a-different-openssl-rand-hex-32

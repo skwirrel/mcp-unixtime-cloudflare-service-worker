@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mcp-unixtime",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Set AUTH_SECRET and TOKEN_SECRET with `wrangler secret put <NAME>`.
+  // Locally they come from .dev.vars (see .dev.vars.example).
+  "vars": {
+    // Set to "false" to retire the /mcp/<AUTH_SECRET> route once header auth is available everywhere.
+    "ALLOW_PATH_SECRET": "true"
+  },
+
+  // ~60 requests per minute per client IP. Real usage is a handful of calls a day.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
+
+  // Left off on purpose: persisted invocation logs would include the request URL,
+  // which on the path route is a credential.
+  "observability": { "enabled": false },
+
+  // Hostname to be confirmed. Uncomment and set workers_dev to false once decided.
+  // "routes": [{ "pattern": "unixtime.example.com", "custom_domain": true }],
+  "workers_dev": true
+}
