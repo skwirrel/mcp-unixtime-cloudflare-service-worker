@@ -182,3 +182,7 @@ The two secrets are independent, so rotating one does not affect the other.
 
 Timezones and date formatting, persistent storage or server-side timing logs, OAuth or multi-user
 support, calendar integration, sub-second precision.
+
+## License
+
+[MIT](LICENSE).

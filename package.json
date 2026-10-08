@@ -2,6 +2,7 @@
   "name": "mcp-unixtime",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Stateless MCP server on Cloudflare Workers: Unix time now() and signed elapsed_since() tools",
   "type": "module",
   "scripts": {
