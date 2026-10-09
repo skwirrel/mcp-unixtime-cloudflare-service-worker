@@ -8,7 +8,7 @@ import worker from "../src/index";
 import { ELAPSED_SINCE_DESCRIPTION, ERROR_MESSAGES, NOW_DESCRIPTION } from "../src/server";
 import { makeToken, verifyToken } from "../src/token";
 
-const BASE = env as unknown as Env;
+const BASE = { ...(env as unknown as Env), DEFAULT_TIMEZONE: "" } as Env;
 const AUTH = BASE.AUTH_SECRET;
 const TOKEN_SECRET = BASE.TOKEN_SECRET;
 const ORIGIN = "https://unixtime.test";
@@ -44,8 +44,12 @@ async function post(path: string, body: string, headers: Record<string, string>,
   return send(path, { method: "POST", body, headers, env: overrides });
 }
 
-async function callTool(name: string, args: Record<string, unknown> = {}): Promise<CallToolResult> {
-  const res = await post("/mcp", rpc("tools/call", { name, arguments: args }), jsonHeaders(`Bearer ${AUTH}`));
+async function callTool(
+  name: string,
+  args: Record<string, unknown> = {},
+  opts: { path?: string; env?: Partial<Env> } = {},
+): Promise<CallToolResult> {
+  const res = await post(opts.path ?? "/mcp", rpc("tools/call", { name, arguments: args }), jsonHeaders(`Bearer ${AUTH}`), opts.env);
   expect(res.status).toBe(200);
   const body = (await res.json()) as { result?: CallToolResult; error?: unknown };
   expect(body.error, JSON.stringify(body.error)).toBeUndefined();
@@ -192,6 +196,74 @@ describe("elapsed_since", () => {
     expect(body.error).toBeUndefined();
     expect(body.result?.isError).toBe(true);
     expect(textOf(body.result!)).toMatch(/Input validation error/);
+  });
+});
+
+describe("timezone", () => {
+  const fixedNow = 1782907200; // 2026-07-01T12:00:00Z, British Summer Time
+
+  it("adds local fields to now() when ?tz= is given on either route", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(fixedNow * 1000);
+    for (const path of ["/mcp?tz=Europe/London", `/mcp/${AUTH}?tz=Europe%2FLondon`]) {
+      const out = (await callTool("now", {}, { path })).structuredContent as Record<string, unknown>;
+      expect(out.unix).toBe(fixedNow);
+      expect(out.iso_utc).toBe("2026-07-01T12:00:00Z");
+      expect(out.timezone).toBe("Europe/London");
+      expect(out.local_iso).toBe("2026-07-01T13:00:00+01:00");
+      expect(out.local_human).toBe("Wed 1 Jul 2026, 13:00:00 BST");
+    }
+  });
+
+  it("adds start and end local fields to elapsed_since", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(fixedNow * 1000);
+    const token = await makeToken(fixedNow - 5527, TOKEN_SECRET);
+    const out = (await callTool("elapsed_since", { token }, { path: "/mcp?tz=America/New_York" })).structuredContent as Record<string, unknown>;
+    expect(out.timezone).toBe("America/New_York");
+    expect(out.start_local_iso).toBe("2026-07-01T06:27:53-04:00");
+    expect(out.start_local_human).toBe("Wed 1 Jul 2026, 06:27:53 EDT");
+    expect(out.end_local_iso).toBe("2026-07-01T08:00:00-04:00");
+    expect(out.elapsed_human).toBe("1h 32m 07s");
+    // The token is zone-independent: the same token verifies with no zone at all.
+    expect((await callTool("elapsed_since", { token })).isError).toBeFalsy();
+  });
+
+  it("falls back to DEFAULT_TIMEZONE, which ?tz= overrides", async () => {
+    const dflt = (await callTool("now", {}, { env: { DEFAULT_TIMEZONE: "Asia/Tokyo" } })).structuredContent as Record<string, unknown>;
+    expect(dflt.timezone).toBe("Asia/Tokyo");
+    expect(dflt.local_iso).toMatch(/\+09:00$/);
+    const over = (await callTool("now", {}, { path: "/mcp?tz=UTC", env: { DEFAULT_TIMEZONE: "Asia/Tokyo" } })).structuredContent as Record<string, unknown>;
+    expect(over.timezone).toBe("UTC");
+    expect(over.local_iso).toMatch(/\+00:00$/);
+  });
+
+  it("omits the local fields entirely when no zone is configured", async () => {
+    const out = (await callTool("now")).structuredContent as Record<string, unknown>;
+    expect(out).not.toHaveProperty("timezone");
+    expect(out).not.toHaveProperty("local_iso");
+    expect(out).not.toHaveProperty("local_human");
+    expect(JSON.parse(textOf(await callTool("now")))).not.toHaveProperty("local_iso");
+  });
+
+  it("returns a bare 400 for an unknown zone, from the URL or the default", async () => {
+    const res = await post("/mcp?tz=Nowhere/Land", rpc("ping"), jsonHeaders(`Bearer ${AUTH}`));
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("");
+    expect((await post("/mcp", rpc("ping"), jsonHeaders(`Bearer ${AUTH}`), { DEFAULT_TIMEZONE: "Nowhere/Land" })).status).toBe(400);
+    // Auth is still checked first: a bad zone with bad credentials is a 401, not a 400.
+    expect((await post("/mcp?tz=Nowhere/Land", rpc("ping"), jsonHeaders("Bearer nope"))).status).toBe(401);
+  });
+
+  it("mentions the zone in the tool descriptions and instructions", async () => {
+    const res = await post("/mcp?tz=Europe/London", rpc("tools/list"), jsonHeaders(`Bearer ${AUTH}`));
+    const { result } = (await res.json()) as { result: { tools: Array<{ name: string; description: string }> } };
+    for (const t of result.tools) {
+      expect(t.description.startsWith(t.name === "now" ? NOW_DESCRIPTION : ELAPSED_SINCE_DESCRIPTION)).toBe(true);
+      expect(t.description).toContain("Europe/London");
+    }
+    const init = await post("/mcp?tz=Europe/London", rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } }), jsonHeaders(`Bearer ${AUTH}`));
+    expect(((await init.json()) as { result: { instructions: string } }).result.instructions).toContain("Europe/London");
   });
 });
 

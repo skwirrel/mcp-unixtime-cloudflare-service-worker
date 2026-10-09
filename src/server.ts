@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Env } from "./env";
 import { formatElapsed, hoursDecimal, isoUtc } from "./format";
+import { localHuman, localIso } from "./timezone";
 import { makeToken, TOKEN_PATTERN, verifyToken, type VerifyFailure } from "./token";
 
 export const SERVER_NAME = "unixtime";
@@ -23,10 +24,17 @@ export const ERROR_MESSAGES: Record<VerifyFailure, string> = {
   future: "Token time is in the future.",
 };
 
+/** Appended to both descriptions when a zone is configured, so the model reports local time unprompted. */
+export const localTimeNote = (tz: string) =>
+  ` Also returns the local time in ${tz} (local_iso and local_human fields); quote the local time to the user unless they ask for UTC.`;
+
 const nowOutput = {
   unix: z.number().int().describe("Current Unix time in whole seconds (UTC)."),
   iso_utc: z.string().describe("The same instant as ISO 8601 UTC, e.g. 2026-10-07T14:00:00Z."),
   token: z.string().describe("Signed token for this instant. Pass it verbatim to elapsed_since."),
+  timezone: z.string().optional().describe("IANA zone the local_* fields are in. Absent when no zone is configured."),
+  local_iso: z.string().optional().describe("The same instant in the configured zone, RFC 3339 with offset."),
+  local_human: z.string().optional().describe("The same instant in the configured zone, readable, with zone abbreviation."),
 };
 
 const elapsedInput = {
@@ -44,6 +52,11 @@ const elapsedOutput = {
   elapsed_human: z.string().describe("Pre-formatted duration: Xh MMm SSs, or Nd HHh MMm SSs for a day or more."),
   elapsed_hours_decimal: z.number().describe("elapsed_seconds / 3600, rounded to 2 decimal places."),
   token: z.string().describe("Fresh token for end_unix, so timings can be chained or checkpointed."),
+  timezone: z.string().optional().describe("IANA zone the *_local_* fields are in. Absent when no zone is configured."),
+  start_local_iso: z.string().optional(),
+  start_local_human: z.string().optional(),
+  end_local_iso: z.string().optional(),
+  end_local_human: z.string().optional(),
 };
 
 function ok(result: Record<string, unknown>): CallToolResult {
@@ -62,29 +75,38 @@ const currentUnix = () => Math.floor(Date.now() / 1000);
 
 /**
  * Build a fresh McpServer. The Worker creates one per request: the server is
- * stateless, so there is nothing to keep between requests.
+ * stateless, so there is nothing to keep between requests. `timeZone`, when set,
+ * adds local-time fields alongside the UTC ones; tokens are unaffected.
  */
-export function createServer(env: Env): McpServer {
+export function createServer(env: Env, timeZone?: string): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
       instructions:
         "Timer for timesheets. Call now() when a conversation starts and keep the token. " +
-        "Call elapsed_since(token) to report how long it has run. All times are Unix time in UTC.",
+        "Call elapsed_since(token) to report how long it has run. All times are Unix time in UTC" +
+        (timeZone ? `, with local time also given in ${timeZone}.` : "."),
     },
   );
+
+  const local = (prefix: string, unix: number): Record<string, string> =>
+    timeZone
+      ? { [`${prefix}local_iso`]: localIso(unix, timeZone), [`${prefix}local_human`]: localHuman(unix, timeZone) }
+      : {};
+  const zone = timeZone ? { timezone: timeZone } : {};
+  const note = timeZone ? localTimeNote(timeZone) : "";
 
   server.registerTool(
     "now",
     {
       title: "Current Unix time",
-      description: NOW_DESCRIPTION,
+      description: NOW_DESCRIPTION + note,
       outputSchema: nowOutput,
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
     },
     async () => {
       const unix = currentUnix();
-      return ok({ unix, iso_utc: isoUtc(unix), token: await makeToken(unix, env.TOKEN_SECRET) });
+      return ok({ unix, iso_utc: isoUtc(unix), token: await makeToken(unix, env.TOKEN_SECRET), ...zone, ...local("", unix) });
     },
   );
 
@@ -92,7 +114,7 @@ export function createServer(env: Env): McpServer {
     "elapsed_since",
     {
       title: "Elapsed time since token",
-      description: ELAPSED_SINCE_DESCRIPTION,
+      description: ELAPSED_SINCE_DESCRIPTION + note,
       inputSchema: elapsedInput,
       outputSchema: elapsedOutput,
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
@@ -114,6 +136,9 @@ export function createServer(env: Env): McpServer {
         elapsed_human: formatElapsed(elapsed),
         elapsed_hours_decimal: hoursDecimal(elapsed),
         token: await makeToken(end, env.TOKEN_SECRET),
+        ...zone,
+        ...local("start_", start),
+        ...local("end_", end),
       });
     },
   );

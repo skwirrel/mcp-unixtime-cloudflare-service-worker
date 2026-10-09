@@ -2,6 +2,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { timingSafeEqual } from "./compare";
 import { pathSecretAllowed, type Env } from "./env";
 import { createServer } from "./server";
+import { chooseTimeZone } from "./timezone";
 
 export type { Env } from "./env";
 
@@ -21,9 +22,9 @@ function clientIp(request: Request): string {
   return request.headers.get("cf-connecting-ip") ?? "unknown";
 }
 
-async function handleMcp(request: Request, env: Env): Promise<Response> {
+async function handleMcp(request: Request, env: Env, timeZone: string | undefined): Promise<Response> {
   // Stateless: a fresh server and transport per request, no session id.
-  const server = createServer(env);
+  const server = createServer(env, timeZone);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -45,8 +46,8 @@ export default {
       return bare(429, { "retry-after": "60" });
     }
 
-    const { pathname } = new URL(request.url);
-    const match = MCP_PATH_RE.exec(pathname);
+    const url = new URL(request.url);
+    const match = MCP_PATH_RE.exec(url.pathname);
     if (!match) {
       return bare(404);
     }
@@ -63,8 +64,15 @@ export default {
       return bare(401);
     }
 
+    // Optional local-time zone: ?tz= on the URL, else DEFAULT_TIMEZONE. A bad name is a
+    // configuration mistake, so fail fast with 400 where the connector is being set up.
+    const tz = chooseTimeZone(url, env.DEFAULT_TIMEZONE);
+    if (!tz.ok) {
+      return bare(400);
+    }
+
     try {
-      return await handleMcp(request, env);
+      return await handleMcp(request, env, tz.timeZone);
     } catch (err) {
       // Never log the request: on the path route its URL is a credential.
       console.error("mcp handler failed:", err instanceof Error ? err.message : String(err));

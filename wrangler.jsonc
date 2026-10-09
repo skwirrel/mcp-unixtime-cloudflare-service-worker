@@ -9,7 +9,10 @@
   // Locally they come from .dev.vars (see .dev.vars.example).
   "vars": {
     // Set to "false" to retire the /mcp/<AUTH_SECRET> route once header auth is available everywhere.
-    "ALLOW_PATH_SECRET": "true"
+    "ALLOW_PATH_SECRET": "true",
+    // Optional IANA zone for local-time fields alongside UTC. Clients can override per URL with ?tz=.
+    // Leave empty for UTC only.
+    "DEFAULT_TIMEZONE": "Europe/London"
   },
 
   // ~60 requests per minute per client IP. Real usage is a handful of calls a day.

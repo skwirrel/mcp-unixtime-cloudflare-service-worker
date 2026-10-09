@@ -7,6 +7,8 @@ export interface Env {
   ALLOW_PATH_SECRET?: string | boolean;
   /** Workers rate limiting binding, keyed on client IP. */
   RATE_LIMITER: RateLimit;
+  /** Optional IANA zone (e.g. Europe/London) for local-time fields. `?tz=` on the URL overrides it. */
+  DEFAULT_TIMEZONE?: string;
 }
 
 export function pathSecretAllowed(env: Env): boolean {

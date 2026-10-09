@@ -22,7 +22,8 @@ rather than guessed. The signed token is what makes the answer trustworthy: Clau
 plausible-looking start time, it can only hand back one the server issued.
 
 It replaces the third-party "Time MCP Server" listings, which point at an npm package the official MCP
-project does not publish. It deliberately does nothing else: no timezones, no storage, no accounts.
+project does not publish. It deliberately does little else: no storage, no accounts, and the only
+timezone handling is an optional "also show me the local time in my zone" setting.
 
 ```json
 // now
@@ -39,6 +40,23 @@ project does not publish. It deliberately does nothing else: no timezones, no st
 
 Tool failures (malformed token, bad signature, token dated in the future) come back as MCP tool errors
 with a plain-English message, never as HTTP errors.
+
+**Local time, optionally.** Most people live in one timezone and would like Claude to quote the time
+in it. Add `?tz=<IANA zone>` to the connector URL, or set `DEFAULT_TIMEZONE` on the Worker, and both
+tools also return the local time:
+
+```json
+// now, with ?tz=Europe/London
+{ "unix": 1791391200, "iso_utc": "2026-10-07T14:00:00Z", "token": "1791391200.a3f91c07",
+  "timezone": "Europe/London", "local_iso": "2026-10-07T15:00:00+01:00",
+  "local_human": "Wed 7 Oct 2026, 15:00:00 BST" }
+```
+
+`elapsed_since` gains `start_local_iso`, `start_local_human`, `end_local_iso` and `end_local_human` in
+the same way, and the tool descriptions tell the model to quote local time unless asked for UTC. DST
+is handled by the runtime's ICU data. Tokens are unaffected, so the same token works whatever zone
+each request names. An unknown zone name gets a bare `400`, so a typo shows up when the connector is
+added rather than as a wrong time later.
 
 ## Layout
 
@@ -74,6 +92,7 @@ npx wrangler login
 | `TOKEN_SECRET` | Secret | HMAC key for timestamp tokens. Different from `AUTH_SECRET`. |
 | `ALLOW_PATH_SECRET` | Variable | `"true"` (default) enables `/mcp/<AUTH_SECRET>`; `"false"` retires it. |
 | `RATE_LIMITER` | Binding | Workers rate limit, 60 requests per minute per client IP, `429` when exceeded. |
+| `DEFAULT_TIMEZONE` | Variable | Optional IANA zone (e.g. `Europe/London`) for local-time fields. `?tz=` on the URL overrides it. Empty means UTC only. |
 
 ```sh
 openssl rand -hex 32 | npx wrangler secret put AUTH_SECRET
@@ -95,7 +114,9 @@ so do not put it behind Cloudflare Access.
 ## Connecting clients
 
 Replace `unixtime.example.com` with your hostname. Until a custom domain is set, the Worker is live at
-`https://mcp-unixtime.conflab.workers.dev`.
+`https://mcp-unixtime.conflab.workers.dev`. To get local time as well as UTC, append `?tz=<IANA zone>`
+to any of the URLs below, e.g. `https://unixtime.example.com/mcp?tz=Europe/London`, or set
+`DEFAULT_TIMEZONE` on the Worker and leave the URLs as they are.
 
 **Claude Code**
 
@@ -206,8 +227,8 @@ The two secrets are independent, so rotating one does not affect the other.
 
 ## Out of scope
 
-Timezones and date formatting, persistent storage or server-side timing logs, OAuth or multi-user
-support, calendar integration, sub-second precision.
+Timezone conversion beyond the single optional display zone, persistent storage or server-side timing
+logs, OAuth or multi-user support, calendar integration, sub-second precision.
 
 ## License
 
